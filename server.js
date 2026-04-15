@@ -1,9 +1,9 @@
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
-const { readPsd } = require('ag-psd');
-const { createCanvas } = require('canvas');
+const { readPsd, writePsd } = require('ag-psd');
 const JSZip = require('jszip');
+const sharp = require('sharp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,9 +11,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '200mb' }));
 
-const upload = multer({ 
-  storage: multer.memoryStorage(), 
-  limits: { fileSize: 200 * 1024 * 1024 } 
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }
 });
 
 app.get('/', (req, res) => {
@@ -37,18 +37,28 @@ app.post('/generate', upload.fields([
     const zip = new JSZip();
 
     for (const faculty of facultyData) {
+      // Update text and color layers
       updateLayers(psd.children, faculty);
 
-      const canvas = createCanvas(psd.width, psd.height);
-      const ctx = canvas.getContext('2d');
+      // Write modified PSD back to buffer
+      const outBuffer = writePsd(psd);
 
-      if (psd.imageData) {
-        const imgData = ctx.createImageData(psd.width, psd.height);
-        imgData.data.set(new Uint8ClampedArray(psd.imageData.data));
-        ctx.putImageData(imgData, 0, 0);
-      }
+      // Re-read to get updated composite image
+      const outPsd = readPsd(new Uint8Array(outBuffer), {
+        skipLayerImageData: true,
+        skipCompositeImageData: false
+      });
 
-      const jpgBuffer = canvas.toBuffer('image/jpeg', { quality: 0.92 });
+      // Convert composite RGBA to JPG using sharp
+      const { width, height } = outPsd;
+      const rawData = Buffer.from(outPsd.imageData.data);
+
+      const jpgBuffer = await sharp(rawData, {
+        raw: { width, height, channels: 4 }
+      })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+
       zip.file(`${faculty.name}_poster.jpg`, jpgBuffer);
     }
 
